@@ -1,10 +1,16 @@
-package sa.app.simulators;
+package beast.app.simulators;
 
-import beast.base.evolution.tree.Node;
-import beast.base.util.Randomizer;
+import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 
-import java.io.*;
-import java.util.*;
+import beast.evolution.tree.Node;
+import beast.util.Randomizer;
 
 /**
  *
@@ -16,6 +22,9 @@ public class SABDSimulator {
     final static int DEATH = 1;
     final static int SAMPLING = 2;
 
+	int removed = 0;
+	int births = 0;
+
     //int lowCount=0, highCount =0;
 
     private int sampleCount; //a counter of sampled nodes that counts nodes during simulation and also used for numbering
@@ -25,9 +34,14 @@ public class SABDSimulator {
     private HashSet<Node> extinctNodes = new HashSet<Node>(); // nodes that died out
     double origin = 0; //is the distance between the origin (0) and the youngest sampled node
     boolean rhoSamplingTimeReached = false; //is true if at least one individual reached rhoSamplingTime
-    Node root; // the root of the tree
+	Node sampledRoot; // the root of the tree
+	Node fullRoot;
     int sampledNodeNumber;
     int rhoSampledNodeNumber;
+
+	int hosts;
+
+	HashMap<Integer, Integer> hostSamples = new HashMap<Integer, Integer>();
 
     /**
      *
@@ -39,16 +53,11 @@ public class SABDSimulator {
      * @param transform as above
      * @param newRSTime rho sampling time
      */
-    public SABDSimulator(double newLambda, double newMu, double newPsi, double newR, double newRho, boolean transform, double newRSTime) {
-        if (!transform) {
-            psi = newPsi;
-            mu = newMu;
-            lambda = newLambda;
-        } else {
-            lambda = newLambda/(1-newMu);
-            mu = newMu*lambda;
-            psi = mu*newPsi/(1-newPsi);
-        }
+	public SABDSimulator(double newLambda, double newMu, double newPsi, double newR, double newRho, double newRSTime) {
+
+		psi = newPsi;
+		mu = newMu;
+		lambda = newLambda;
         r= newR;
         rho = newRho;
         sampleCount = 0;
@@ -62,9 +71,13 @@ public class SABDSimulator {
         extinctNodes = new HashSet<Node>();
         origin = 0;
         rhoSamplingTimeReached = false;
-        root = null;
+		sampledRoot = null;
         sampledNodeNumber = 0;
         rhoSampledNodeNumber = 0;
+		removed = 0;
+		births = 0;
+		hosts = 1;
+		hostSamples = new HashMap<Integer, Integer>();
     }
 
     /**
@@ -83,6 +96,8 @@ public class SABDSimulator {
         Node initial = new Node();
         initial.setNr(-1);
         initial.setHeight(0.0);
+		initial.setID(String.valueOf(hosts) + "_");
+		hostSamples.put(hosts, 0);
         ArrayList<Node> tipNodes = new ArrayList<Node>();    // an array of nodes at the previous stage of simulation
         tipNodes.add(initial);
 
@@ -131,16 +146,19 @@ public class SABDSimulator {
         }
 
         //the unique node remained in the array is the root of the sampled tree
-        root = new Node();
+		sampledRoot = new Node();
         for (Node node:children) {
-            root=node;
+			sampledRoot = node;
         }
+//		System.out.println(sampledRoot);
+//		System.out.println(sampledRoot.toNewick());
+		fullRoot = sampledRoot.copy();
+		removeSingleChildNodes(sampledRoot);
+//		System.out.println(sampledRoot.toNewick());
 
-        removeSingleChildNodes(root);
-
-        if (root.getChildCount()==1) {
-            Node newRoot = root.getLeft();
-            root=newRoot;
+		if (sampledRoot.getChildCount() == 1) {
+			Node newRoot = sampledRoot.getLeft();
+			sampledRoot = newRoot;
         }
 
 //        if (root.getLeafNodeCount() > 250){
@@ -174,7 +192,7 @@ public class SABDSimulator {
 //        writer.println(countSA(root));
         //rootHeight[0] = origin+root.getHeight();
         //System.out.println(origin);
-        sampledNodeNumber = root.getLeafNodeCount();
+		sampledNodeNumber = sampledRoot.getLeafNodeCount();
         //writer.println(leafCount[0]);
         return 1;
     }
@@ -196,12 +214,17 @@ public class SABDSimulator {
         ArrayList<Node> newNodes = new ArrayList<Node>();
         double height = node.getHeight() - timeInterval;
         if (rhoSamplingTime != 0 && height + rhoSamplingTime <= 0) {
+			node.setHeight(-rhoSamplingTime);
             double randomFrom01 = Randomizer.nextDouble();
             if (randomFrom01 <= rho) {
                 node.setHeight(-rhoSamplingTime);
                 node.setNr(sampleCount);
+				String tmpId = node.getID().split("_")[0];
+				int tmpNr = hostSamples.get(Integer.valueOf(tmpId)) + 1;
+				node.setID(tmpId + "_" + tmpNr + "_");
+				hostSamples.put(Integer.valueOf(tmpId), tmpNr);
+
                 sampledNodes.add(node);
-                node.setID("A"+sampleCount);
                 sampleCount++;
                 rhoSampledNodeNumber++;
                 rhoSamplingTimeReached = true;
@@ -220,6 +243,14 @@ public class SABDSimulator {
                 right.setNr(-1);
                 left.setHeight(height);
                 right.setHeight(height);
+				String tmpId = node.getID().split("_")[0];
+//				int tmpNr = hostSamples.get(Character.getNumericValue(tmpId)) + 1;
+				left.setID(tmpId + "_");
+//				hostSamples.put(Character.getNumericValue(tmpId), tmpNr);
+				hosts += 1;
+				right.setID(String.valueOf(hosts) + "_");
+				hostSamples.put(hosts, 0);
+				births += 1;				
                 connectParentToChildren(node, left, right);
                 newNodes.add(left);
                 newNodes.add(right);
@@ -241,11 +272,22 @@ public class SABDSimulator {
                     connectParentToChildren(node, left, right);
                     newNodes.add(left);
                     sampledNodes.add(right);
-                    right.setID("A"+sampleCount);
+					String tmpId = node.getID().split("_")[0];
+					int tmpNr = hostSamples.get(Integer.valueOf(tmpId)) + 1;
+					right.setID(tmpId + "_" + tmpNr + "_");
+					left.setID(tmpId + "_");
+					hostSamples.put(Integer.valueOf(tmpId), tmpNr);
+
+//					right.setID(node.getID());
+//					left.setID(node.getID());
                 } else {
                     node.setNr(sampleCount);
                     sampledNodes.add(node);
-                    node.setID("A"+sampleCount);
+					String tmpId = node.getID().split("_")[0];
+					int tmpNr = hostSamples.get(Integer.valueOf(tmpId)) + 1;
+					node.setID(tmpId + "_" + tmpNr + "_");
+					hostSamples.put(Integer.valueOf(tmpId), tmpNr);
+//					node.setID(node.getID());
                 }
                 sampleCount++;
             }
@@ -294,21 +336,42 @@ public class SABDSimulator {
             Node left = node.getLeft();
             Node right = node.getRight();
 
+			removeSingleChildNodes(right);
             removeSingleChildNodes(left);
-            removeSingleChildNodes(right);
-            for (Node child:node.getChildren()) {
-                if (child.getNr() == -1) {
-                    node.removeChild(child);
-                }
+
+
+            
+
+			List<Node> toRemove = new ArrayList<>();
+
+			for (Node child : node.getChildren()) {
+				if (child.getNr() == -1) {
+					toRemove.add(child);
+//					node.removeChild(child);
+				}
+			}
+			for (Node n : toRemove) {
+				node.removeChild(n);
             }
-            if (node.getChildCount() == 1 && node.getParent() != null) {
-                Node parent = node.getParent();
-                Node newChild =  node.getLeft();
-                parent.removeChild(node);
-                parent.addChild(newChild);
-                newChild.setParent(parent);
-                //node.setParent(null);
-            }
+
+			if (node.getChildCount() == 1 && node.getParent() != null) {
+				Node parent = node.getParent();
+				Node newChild = node.getLeft();
+				Boolean nodeIsLeft = node.getNr() == parent.getLeft().getNr() ? true : false;
+				Node otherSibling = nodeIsLeft ? parent.getRight() : parent.getLeft();
+				parent.removeChild(node);
+				parent.removeChild(otherSibling);
+				if (nodeIsLeft) {
+					parent.addChild(newChild);
+					parent.addChild(otherSibling);
+				} else {
+					parent.addChild(otherSibling);
+					parent.addChild(newChild);
+				}
+				newChild.setParent(parent);
+				otherSibling.setParent(parent);
+				// node.setParent(null);
+			}
         }
     }
 
@@ -318,7 +381,8 @@ public class SABDSimulator {
      * node1 height is greater than node2 height.
      */
     private Comparator<Node> nodeComparator = new Comparator<Node>() {
-        public int compare(Node node1, Node node2) {
+        @Override
+		public int compare(Node node1, Node node2) {
             return (node2.getHeight() - node1.getHeight() < 0)?-1:1;
         }
     };
@@ -342,12 +406,12 @@ public class SABDSimulator {
         }
     }
 
-    public void printTraitsWithRhoSamplingTime(Node node, PrintStream writer){
+	public void printTraitsWithRhoSamplingTime(Node node, PrintStream writer, double offset) {
         if (node.isLeaf()){
-            writer.println(node.getID() + "=" + (rhoSamplingTime + node.getHeight()) + ',');
+			writer.println(node.getID() + "=" + (rhoSamplingTime + node.getHeight() - offset) + ',');
         } else {
-            printTraitsWithRhoSamplingTime(node.getLeft(), writer);
-            printTraitsWithRhoSamplingTime(node.getRight(), writer);
+			printTraitsWithRhoSamplingTime(node.getLeft(), writer, offset);
+			printTraitsWithRhoSamplingTime(node.getRight(), writer, offset);
         }
     }
 
@@ -365,6 +429,44 @@ public class SABDSimulator {
             return Math.min(minLeft, minRight);
         }
     }
+
+	public void printTransmissionTimes(Node node, PrintStream writer) {
+		if (!node.isLeaf()) {
+			if (!node.isFake()) {
+				writer.println(node.getLeft().getID().split("_")[0] + "_" + node.getRight().getID().split("_")[0] + ":"
+						+ (rhoSamplingTime
+						+ node.getHeight()));
+			}
+			printTransmissionTimes(node.getLeft(), writer);
+			printTransmissionTimes(node.getRight(), writer);
+		}
+	}
+
+	public void printSamepatientSamples(Node root, PrintStream writer) {
+		HashMap<String, List<String>> samePatientSamples = new HashMap<String, List<String>>();
+		for (Node n : root.getAllLeafNodes()) {
+			String key = n.getID().split("_")[0];
+			if (samePatientSamples.keySet().contains(key)) {
+				samePatientSamples.get(key).add(n.getID().split("_")[1]);
+
+			} else {
+				List<String> tmp = new ArrayList<String>();
+				tmp.add(n.getID().split("_")[1]);
+				samePatientSamples.put(key, tmp);
+			}
+		}
+		for (String key : samePatientSamples.keySet()) {
+			if (samePatientSamples.get(key).size() > 1) {
+
+				int n_samples = 0;
+				for (String s : samePatientSamples.get(key)) {
+					n_samples += 1;
+//					writer.print(" " + s);
+				}
+				writer.println(key + ":" + n_samples);
+			}
+		}
+	}
 
     public HashSet<String> printInternalNodeAges(Node node, PrintStream writer) {
 
